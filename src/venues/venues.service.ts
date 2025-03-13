@@ -4,15 +4,19 @@ import { HttpService } from '@nestjs/axios';
 import { lastValueFrom } from 'rxjs';
 import * as XLSX from 'xlsx';
 import * as fs from 'node:fs';
+import * as path from 'node:path';
 //
 import { CreateVenueDto } from './dto/create-venue.dto';
 import { UpdateVenueDto } from './dto/update-venue.dto';
+import {
+  MappedVenue,
+  VenueResponse,
+} from 'src/venues/interfaces/venue.interface';
 
 @Injectable()
 export class VenuesService {
   private readonly logger = new Logger('VenuesService');
   private readonly GRAPHQL_URL: string;
-  private readonly AUTHORIZATION_TOKEN: string;
   private readonly FILE_PATH: string;
 
   constructor(
@@ -20,19 +24,12 @@ export class VenuesService {
     private readonly httpService: HttpService,
   ) {
     this.GRAPHQL_URL = this.configService.get<string>('graphqlUrl')!;
-    this.AUTHORIZATION_TOKEN = `Bearer ${this.configService.get<string>('authorizationToken')}`;
     this.FILE_PATH = this.configService.get<string>('filePath')!;
-  }
-
-  private getAuthHeaders() {
-    return {
-      Authorization: this.AUTHORIZATION_TOKEN,
-    };
   }
 
   async getCityId(cityName: string): Promise<string | undefined> {
     const query = `
-      query GetCities($filter: CityFilter!) {
+      query GetCity($filter: CityFilter!) {
         cities(filter: $filter) {
           edges {
             node {
@@ -50,26 +47,22 @@ export class VenuesService {
     };
     try {
       const response = await lastValueFrom(
-        this.httpService.post(
-          this.GRAPHQL_URL,
-          { query, variables },
-          { headers: this.getAuthHeaders() },
-        ),
+        this.httpService.post(this.GRAPHQL_URL, { query, variables }),
       );
       const city = response.data.data.cities.edges[0]?.node;
       return city ? city.id : undefined;
     } catch (error) {
-      console.error('Error getting city ID:', error);
+      this.logger.error('Error getting city ID:', error);
       throw error;
     }
   }
 
   async create(createVenueDto: CreateVenueDto) {
     const mutation = `
-      mutation($input: CreateOneVenueInput!) {
+      mutation CreateVenue($input: CreateOneVenueInput!) {
         createOneVenue(input: $input) {
-        name
-      }
+          name
+        }
       }
     `;
     const variables = {
@@ -82,11 +75,7 @@ export class VenuesService {
     };
     try {
       const response = await lastValueFrom(
-        this.httpService.post(
-          this.GRAPHQL_URL,
-          { query: mutation, variables },
-          { headers: this.getAuthHeaders() },
-        ),
+        this.httpService.post(this.GRAPHQL_URL, { query: mutation, variables }),
       );
       return response.data.data.createOneVenue;
     } catch (error) {
@@ -96,7 +85,7 @@ export class VenuesService {
   }
 
   async processExcelAndCreateVenues(): Promise<any> {
-    // Leer el archivo .xlsx desde el sistema de archivos local
+    // Leer el archivo .xlsx
     const fileBuffer = fs.readFileSync(this.FILE_PATH);
     const workbook = XLSX.read(fileBuffer, { type: 'buffer' });
     const worksheet = workbook.Sheets[workbook.SheetNames[2]];
@@ -113,9 +102,8 @@ export class VenuesService {
         const cityName = row[7] as string;
         const capacity = row[row.length - 1] as number;
 
-        // Buscamos el ID de la ciudad en GraphQL
         const cityId = await this.getCityId(cityName);
-        console.log(`City ID: ${cityId}, Name: ${cityName}`);
+        this.logger.log(`City ID: ${cityId}, Name: ${cityName}`);
         const venueFound = await this.getVenueId(venueName);
         if (venueFound != undefined) {
           this.logger.error(`Venue ${venueName} already exists.`);
@@ -136,8 +124,55 @@ export class VenuesService {
     }
   }
 
-  findAll() {
-    return `This action returns all venues`;
+  async findAll() {
+    const query = `
+      query Venues {
+        venues {
+          edges {
+            node {
+              id
+              name
+              capacity
+              images {
+                bucketName
+                displayName
+                key
+                type
+                url
+              }
+              cityId
+            }
+          }
+        }
+      }
+    `;
+    try {
+      const response = await lastValueFrom(
+        this.httpService.post(this.GRAPHQL_URL, { query }),
+      );
+
+      const venueResponse: VenueResponse | null = response.data.data;
+
+      if (venueResponse) {
+        const venues: MappedVenue[] = venueResponse.venues.edges.map(
+          (edge) => ({
+            id: edge.node.id,
+            images: edge.node.images,
+            name: edge.node.name,
+          }),
+        );
+
+        this.writeVenuesToFile(venues);
+
+        return venues;
+      } else {
+        this.writeVenuesToFile([]);
+        return [];
+      }
+    } catch (error) {
+      this.logger.error('Error findAll:', error);
+      throw error;
+    }
   }
 
   findOne(id: number) {
@@ -146,7 +181,7 @@ export class VenuesService {
 
   async getVenueId(venueName: string): Promise<string | undefined> {
     const query = `
-      query GetVenues($filter: VenueFilter!) {
+      query Venues ($filter: VenueFilter!) {
         venues(filter: $filter) {
           edges {
             node {
@@ -164,16 +199,12 @@ export class VenuesService {
     };
     try {
       const response = await lastValueFrom(
-        this.httpService.post(
-          this.GRAPHQL_URL,
-          { query, variables },
-          { headers: this.getAuthHeaders() },
-        ),
+        this.httpService.post(this.GRAPHQL_URL, { query, variables }),
       );
       const venue = response.data.data.venues.edges[0]?.node;
       return venue ? venue.id : undefined;
     } catch (error) {
-      console.error('Error getting city ID:', error);
+      this.logger.error('Error getting city ID:', error);
       throw error;
     }
   }
@@ -184,5 +215,22 @@ export class VenuesService {
 
   remove(id: number) {
     return `This action removes a #${id} venue`;
+  }
+
+  private writeVenuesToFile(venues: MappedVenue[]) {
+    const content = `import { MappedVenue } from 'src/venues/interfaces/venue.interface';\n\nexport const venues: MappedVenue[] = ${JSON.stringify(
+      venues,
+      null,
+      2,
+    )
+      .replace(/"([^"]+)":/g, '$1:')
+      .replace(/"/g, "'")};\n`;
+
+    const filePath = path.join(process.cwd(), 'seed/venues/venues.seed.ts');
+
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, content);
+
+    this.logger.log(`venues.seed.ts file created: ${filePath}`);
   }
 }
