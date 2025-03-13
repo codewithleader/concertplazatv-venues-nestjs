@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { HttpService } from '@nestjs/axios';
 import { CreateVenueDto } from './dto/create-venue.dto';
 import { UpdateVenueDto } from './dto/update-venue.dto';
 
@@ -8,7 +9,10 @@ export class VenuesService {
   private readonly GRAPHQL_URL: string;
   private readonly AUTHORIZATION_TOKEN: string;
 
-  constructor(private readonly configService: ConfigService) {
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly httpService: HttpService,
+  ) {
     this.GRAPHQL_URL = this.configService.get<string>('graphqlUrl')!;
     this.AUTHORIZATION_TOKEN =
       this.configService.get<string>('authorizationToken')!;
