@@ -26,7 +26,7 @@ export interface Node {
 export interface S3Object {
   bucketName: string;
   displayName: string;
-  key: string;
-  type: string;
+  key: string; // `public/venues/${venue.id}/images/${v4()}.${file.name.split('.').pop()}`;
+  type: string; // image
   url: string;
 }

@@ -9,7 +9,7 @@ import {
 } from 'class-validator';
 import { S3Object } from 'src/venues/interfaces/venue.interface';
 
-class S3ObjectClass {
+export class S3ObjectClass {
   @IsString()
   bucketName: string;
 
@@ -48,5 +48,5 @@ export class CreateVenueDto {
     }
     return true;
   })
-  images: S3Object[];
+  images?: S3Object[];
 }

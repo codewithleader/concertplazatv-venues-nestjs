@@ -1,10 +1,15 @@
-import { Injectable, Logger } from '@nestjs/common';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import {
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
 import { lastValueFrom } from 'rxjs';
 import * as XLSX from 'xlsx';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
+import { v4 } from 'uuid';
 //
 import { CreateVenueDto } from './dto/create-venue.dto';
 import { UpdateVenueDto } from './dto/update-venue.dto';
@@ -12,6 +17,7 @@ import {
   MappedVenue,
   VenueResponse,
 } from 'src/venues/interfaces/venue.interface';
+import { S3Service } from 'src/media/services/aws/s3.service';
 
 @Injectable()
 export class VenuesService {
@@ -22,6 +28,7 @@ export class VenuesService {
   constructor(
     private readonly configService: ConfigService,
     private readonly httpService: HttpService,
+    private readonly s3Service: S3Service,
   ) {
     this.GRAPHQL_URL = this.configService.get<string>('graphqlUrl')!;
     this.FILE_PATH = this.configService.get<string>('filePath')!;
@@ -53,7 +60,7 @@ export class VenuesService {
       return city ? city.id : undefined;
     } catch (error) {
       this.logger.error('Error getting city ID:', error);
-      throw error;
+      throw new InternalServerErrorException('Error in getCityId');
     }
   }
 
@@ -80,7 +87,7 @@ export class VenuesService {
       return response.data.data.createOneVenue;
     } catch (error) {
       this.logger.error('Error creating venue:', error);
-      throw error;
+      throw new InternalServerErrorException('Error in create (venue)');
     }
   }
 
@@ -171,7 +178,7 @@ export class VenuesService {
       }
     } catch (error) {
       this.logger.error('Error findAll:', error);
-      throw error;
+      throw new InternalServerErrorException('Error in findAll (venues)');
     }
   }
 
@@ -205,15 +212,31 @@ export class VenuesService {
       return venue ? venue.id : undefined;
     } catch (error) {
       this.logger.error('Error getting city ID:', error);
-      throw error;
+      throw new InternalServerErrorException('Error in getVenueId');
     }
   }
 
-  update(id: number, updateVenueDto: UpdateVenueDto) {
-    return `This action updates a #${id} venue`;
+  async update(
+    file: Express.Multer.File,
+    id: string,
+    updateVenueDto: UpdateVenueDto,
+  ) {
+    const [fileType, fileExtension] = file.mimetype.split('/');
+    const fileName = `${v4()}.${fileExtension}`;
+    const fileKey = `public/venues/${id}/images/${fileName}`;
+
+    const s3Object = await this.s3Service.uploadFile(
+      file,
+      fileKey,
+      fileName,
+      fileType,
+    );
+
+    // TODO: Update venue.image = [s3Object]
+    return { s3Object, id, updateVenueDto };
   }
 
-  remove(id: number) {
+  remove(id: string) {
     return `This action removes a #${id} venue`;
   }
 
